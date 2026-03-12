@@ -80,6 +80,12 @@ async function fetchNFTs() {
         // Processed output is always PNG
         const filename = path.join(OUTPUT_DIR, `${nft.identifier || count}.png`);
 
+        if (fs.existsSync(filename)) {
+          console.log(`Skipped (exists): ${filename}`);
+          count++;
+          continue;
+        }
+
         await downloadImage(imageUrl, filename);
         count++;
       }
