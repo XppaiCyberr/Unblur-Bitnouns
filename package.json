@@ -12,7 +12,6 @@
   "license": "ISC",
   "packageManager": "pnpm@10.27.0",
   "dependencies": {
-    "dotenv": "^17.3.1",
     "ethers": "^6.16.0",
     "sharp": "^0.34.5"
   }
