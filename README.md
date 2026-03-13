@@ -24,13 +24,8 @@ So in short: **blurry image in → grid sampling + nearest-neighbor upscale → 
 pnpm install
 ```
 
-Create a `.env.local` file with your Ethereum RPC URL:
-
-```
-ETH_RPC_URL=your_mainnet_rpc_url_here
-```
-
-You can use any Ethereum mainnet JSON‑RPC provider (Infura, Alchemy, Ankr, etc.).
+The script uses a public Ethereum RPC endpoint by default (see `rpcUrl` in `index.js`).  
+If you prefer a different provider (Infura, Alchemy, Ankr, etc.), edit that constant.
 
 Then:
 
@@ -49,11 +44,8 @@ The repo has a workflow that:
   - Uploads the `images/` folder as a **workflow artifact** (download from the run).
   - **Commits and pushes** the images into the repo’s `images/` folder so they’re visible on GitHub.
 
-Add your Ethereum RPC URL as a repository secret:
-
-- **Settings → Secrets and variables → Actions → New repository secret**
-- Name: `ETH_RPC_URL`  
-- Value: your RPC URL
+The workflow currently assumes the same RPC settings as your local script. If you change
+the `rpcUrl` in `index.js`, update the workflow if needed.
 
 ## License
 
