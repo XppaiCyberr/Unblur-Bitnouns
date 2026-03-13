@@ -1,31 +1,23 @@
 import fs from 'fs';
 import path from 'path';
-import 'dotenv/config'; // loads .env into process.env
-
-// Support loading custom path since dotenv natively loads .env not .env.local
-// Let's use config constructor to load .env.local specifically
-import dotenv from 'dotenv';
+import { ethers } from 'ethers';
 import { unblurImage } from './unblur.js';
-dotenv.config({ path: '.env.local' });
 
-const apiKey = process.env.OPENSEA_API_KEY;
-if (!apiKey) {
-  console.error('Missing OPENSEA_API_KEY (set in .env.local or GitHub Secrets)');
-  process.exit(1);
-}
+const rpcUrl = "https://eth.drpc.org";
 
-const COLLECTION_SLUG = 'bitnouns';
+const CONTRACT_ADDRESS = '0xd7cb208297f661867a43c08afe5980ee88dfc678';
 const OUTPUT_DIR = path.join(process.cwd(), 'images');
 
-async function getMaxProcessedId(outputDir) {
+async function getTokenState(outputDir) {
   try {
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir);
-      return 0;
+      return { maxId: 0, existingIds: new Set() };
     }
 
     const files = await fs.promises.readdir(outputDir);
     let maxId = 0;
+    const existingIds = new Set();
 
     for (const file of files) {
       const match = /^(\d+)\.png$/.exec(file);
@@ -35,12 +27,15 @@ async function getMaxProcessedId(outputDir) {
       if (Number.isFinite(id) && id > maxId) {
         maxId = id;
       }
+      if (Number.isFinite(id)) {
+        existingIds.add(id);
+      }
     }
 
-    return maxId;
+    return { maxId, existingIds };
   } catch (error) {
-    console.warn('Failed to scan images directory, defaulting maxProcessedId to 0:', error.message);
-    return 0;
+    console.warn('Failed to scan images directory, defaulting token state to empty:', error.message);
+    return { maxId: 0, existingIds: new Set() };
   }
 }
 
@@ -65,105 +60,84 @@ async function downloadImage(url, filename) {
   }
 }
 
+function extractImageUrlFromTokenUri(tokenUri) {
+  if (!tokenUri || typeof tokenUri !== 'string') return null;
+
+  if (!tokenUri.startsWith('data:')) {
+    return tokenUri;
+  }
+
+  const base64Index = tokenUri.indexOf('base64,');
+  if (base64Index === -1) return null;
+
+  const base64Payload = tokenUri.slice(base64Index + 'base64,'.length);
+  try {
+    const json = Buffer.from(base64Payload, 'base64').toString('utf8');
+    const metadata = JSON.parse(json);
+    if (metadata && typeof metadata.image === 'string') {
+      return metadata.image;
+    }
+    return null;
+  } catch (error) {
+    console.error('Failed to decode tokenURI metadata:', error.message);
+    return null;
+  }
+}
+
 async function fetchNFTs() {
-  const maxProcessedId = await getMaxProcessedId(OUTPUT_DIR);
-  let next = '';
-  let count = 0;
+  const { maxId: maxProcessedId, existingIds } = await getTokenState(OUTPUT_DIR);
   let downloadedCount = 0;
   let newMaxId = maxProcessedId;
 
   console.log(`Detected max processed ID: ${maxProcessedId}`);
-  console.log(`Fetching NFTs for collection: ${COLLECTION_SLUG}...`);
+  console.log(`Fetching NFTs directly from contract: ${CONTRACT_ADDRESS}...`);
 
-  do {
-    const url = new URL(`https://api.opensea.io/api/v2/collection/${COLLECTION_SLUG}/nfts`);
-    url.searchParams.append('limit', '50');
-    if (next) {
-      url.searchParams.append('next', next);
-    }
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const abi = ['function tokenURI(uint256 tokenId) view returns (string)'];
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, abi, provider);
 
+  const MAX_CONSECUTIVE_FAILURES = 10;
+  let tokenId = 0;
+  let consecutiveFailures = 0;
+
+  while (consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
     try {
-      const response = await fetch(url.toString(), {
-        headers: {
-          'x-api-key': apiKey,
-          'accept': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        console.error(`Failed to fetch from OpenSea: ${response.status} ${response.statusText}`);
-        const text = await response.text().catch(() => '');
-        console.error(text);
-        break;
+      if (existingIds.has(tokenId)) {
+        console.log(`Skipped (exists): tokenId ${tokenId}`);
+        tokenId++;
+        continue;
       }
 
-      const data = await response.json();
-      const nfts = data.nfts || [];
+      const filename = path.join(OUTPUT_DIR, `${tokenId}.png`);
 
-      let anyNewIdThisPage = false;
-      let allNumericThisPage = true;
+      const tokenUri = await contract.tokenURI(tokenId);
+      const imageUrl = extractImageUrlFromTokenUri(tokenUri);
 
-      for (const nft of nfts) {
-        const imageUrl = nft.image_url;
-        if (!imageUrl) continue;
-        const identifier = nft.identifier;
-
-        const tokenId = Number.parseInt(identifier, 10);
-        if (!Number.isFinite(tokenId)) {
-          // Fallback to legacy behavior when identifier is not a numeric token ID
-          const fallbackFilename = path.join(OUTPUT_DIR, `${identifier || count}.png`);
-
-          if (fs.existsSync(fallbackFilename)) {
-            console.log(`Skipped (exists, fallback): ${fallbackFilename}`);
-            count++;
-            continue;
-          }
-
-          await downloadImage(imageUrl, fallbackFilename);
-          count++;
-          downloadedCount++;
-          continue;
-        }
-
-        if (tokenId <= maxProcessedId) {
-          console.log(`Skipped (already processed by ID): ${tokenId}`);
-          allNumericThisPage = allNumericThisPage && true;
-          continue;
-        }
-
-        allNumericThisPage = allNumericThisPage && true;
-        anyNewIdThisPage = true;
-
-        // Processed output is always PNG
-        const filename = path.join(OUTPUT_DIR, `${tokenId}.png`);
-
-        if (fs.existsSync(filename)) {
-          console.log(`Skipped (exists): ${filename}`);
-          continue;
-        }
-
-        await downloadImage(imageUrl, filename);
-        downloadedCount++;
-        if (tokenId > newMaxId) {
-          newMaxId = tokenId;
-        }
+      if (!imageUrl) {
+        console.warn(`No image URL found for tokenId ${tokenId}`);
+        consecutiveFailures++;
+        tokenId++;
+        continue;
       }
 
-      next = data.next;
-
-      if (nfts.length > 0 && allNumericThisPage && !anyNewIdThisPage) {
-        console.log('No NFTs with ID > maxProcessedId found on this page; stopping pagination.');
-        break;
+      await downloadImage(imageUrl, filename);
+      downloadedCount++;
+      existingIds.add(tokenId);
+      consecutiveFailures = 0;
+      if (tokenId > newMaxId) {
+        newMaxId = tokenId;
       }
 
-      // Be gentle to rate limits
-      await new Promise(r => setTimeout(r, 1000));
-
+      // Be gentle to RPC / renderer
+      await new Promise(r => setTimeout(r, 500));
     } catch (error) {
-      console.error('Fetch error:', error.message);
-      break;
+      console.error(`Error processing tokenId ${tokenId}:`, error.message);
+      consecutiveFailures++;
+      // Continue with the next tokenId
+      tokenId++;
+      continue;
     }
-  } while (next);
+  }
 
   console.log(`Finished processing. Downloaded ${downloadedCount} new images. Max processed ID (approx): ${newMaxId}`);
 }
