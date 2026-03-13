@@ -8,7 +8,7 @@ Bitnouns NFTs have been showing up blurred on OpenSea (and elsewhere) for a long
 
 ## How it works
 
-1. **Fetch** – The script calls the OpenSea API for the [bitnouns](https://opensea.io/collection/bitnouns) collection and downloads each NFT’s image (the blurry one OpenSea serves).
+1. **Fetch** – The script reads `tokenURI(tokenId)` directly from the BitNouns ERC‑721 contract on Ethereum, decodes the base64 JSON metadata, and pulls the `image` URL for each token. It uses the on-chain contract as the source of truth instead of the OpenSea API.
 
 2. **Unblur** – Each image is treated as a **32×32 grid** of “logical” pixels. For every cell we take the **center pixel**, which gives a clean 32×32 image. That is then **upscaled to 512×512** with **nearest-neighbor** interpolation (no smoothing), so you get sharp pixel-art instead of a blur.
 
@@ -24,13 +24,13 @@ So in short: **blurry image in → grid sampling + nearest-neighbor upscale → 
 pnpm install
 ```
 
-Create a `.env.local` file with your OpenSea API key:
+Create a `.env.local` file with your Ethereum RPC URL:
 
 ```
-OPENSEA_API_KEY=your_key_here
+ETH_RPC_URL=your_mainnet_rpc_url_here
 ```
 
-Get a key from [OpenSea](https://docs.opensea.io/reference/api-keys).
+You can use any Ethereum mainnet JSON‑RPC provider (Infura, Alchemy, Ankr, etc.).
 
 Then:
 
@@ -49,11 +49,11 @@ The repo has a workflow that:
   - Uploads the `images/` folder as a **workflow artifact** (download from the run).
   - **Commits and pushes** the images into the repo’s `images/` folder so they’re visible on GitHub.
 
-Add your OpenSea API key as a repository secret:
+Add your Ethereum RPC URL as a repository secret:
 
 - **Settings → Secrets and variables → Actions → New repository secret**
-- Name: `OPENSEA_API_KEY`  
-- Value: your API key
+- Name: `ETH_RPC_URL`  
+- Value: your RPC URL
 
 ## License
 
