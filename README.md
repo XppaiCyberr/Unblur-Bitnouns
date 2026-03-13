@@ -2,6 +2,10 @@
 
 Bitnouns NFTs have been showing up blurred on OpenSea (and elsewhere) for a long time. This project fetches the collection, **unblurs** each image using a pixel-grid trick, and saves sharp 512×512 versions. It makes me happy to finally see my Bitnouns the way they’re supposed to look.
 
+# Before - After
+<img width="512" height="512" alt="image" src="https://github.com/user-attachments/assets/fdfdfad9-f34c-41aa-99c3-3310f10d0c68" />
+<img width="512" height="512" alt="ab-ezgif com-webp-to-png-converter" src="https://github.com/user-attachments/assets/9bf1a47f-9da9-4293-a604-dfd0ec8280ee" />
+
 ## How it works
 
 1. **Fetch** – The script calls the OpenSea API for the [bitnouns](https://opensea.io/collection/bitnouns) collection and downloads each NFT’s image (the blurry one OpenSea serves).
