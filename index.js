@@ -3,10 +3,11 @@ import path from 'path';
 import { ethers } from 'ethers';
 import { unblurImage } from './unblur.js';
 
-const rpcUrl = "https://eth.drpc.org";
+const rpcUrl = "https://eth-mainnet.g.alchemy.com/v2/vQGyxhOFF05Xc6ekLTsRC";
 
 const CONTRACT_ADDRESS = '0xd7cb208297f661867a43c08afe5980ee88dfc678';
 const OUTPUT_DIR = path.join(process.cwd(), 'images');
+const BLURRED_OUTPUT_DIR = path.join(process.cwd(), 'images-blurred');
 
 async function getTokenState(outputDir) {
   try {
@@ -45,6 +46,14 @@ async function downloadImage(url, filename) {
     if (!res.ok) throw new Error(`Failed to fetch image: ${res.statusText}`);
 
     const buffer = Buffer.from(await res.arrayBuffer());
+
+    // Save original blurred image alongside the unblurred version
+    try {
+      const blurredFilename = path.join(BLURRED_OUTPUT_DIR, path.basename(filename));
+      await fs.promises.writeFile(blurredFilename, buffer);
+    } catch (err) {
+      console.warn(`Failed to save blurred image for ${url}:`, err.message);
+    }
 
     let toWrite = buffer;
     try {
@@ -89,6 +98,15 @@ async function fetchNFTs() {
   let downloadedCount = 0;
   let newMaxId = maxProcessedId;
 
+  // Ensure blurred output directory exists up front so the folder is always created
+  try {
+    if (!fs.existsSync(BLURRED_OUTPUT_DIR)) {
+      fs.mkdirSync(BLURRED_OUTPUT_DIR, { recursive: true });
+    }
+  } catch (err) {
+    console.warn('Failed to ensure blurred images directory exists:', err.message);
+  }
+
   console.log(`Detected max processed ID: ${maxProcessedId}`);
   console.log(`Fetching NFTs directly from contract: ${CONTRACT_ADDRESS}...`);
 
@@ -96,47 +114,55 @@ async function fetchNFTs() {
   const abi = ['function tokenURI(uint256 tokenId) view returns (string)'];
   const contract = new ethers.Contract(CONTRACT_ADDRESS, abi, provider);
 
-  const MAX_CONSECUTIVE_FAILURES = 10;
+  const CONCURRENCY = 5;
+  const targetMaxId = maxProcessedId;
   let tokenId = 0;
-  let consecutiveFailures = 0;
 
-  while (consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
-    try {
-      if (existingIds.has(tokenId)) {
-        console.log(`Skipped (exists): tokenId ${tokenId}`);
-        tokenId++;
-        continue;
-      }
-
-      const filename = path.join(OUTPUT_DIR, `${tokenId}.png`);
-
-      const tokenUri = await contract.tokenURI(tokenId);
-      const imageUrl = extractImageUrlFromTokenUri(tokenUri);
-
-      if (!imageUrl) {
-        console.warn(`No image URL found for tokenId ${tokenId}`);
-        consecutiveFailures++;
-        tokenId++;
-        continue;
-      }
-
-      await downloadImage(imageUrl, filename);
-      downloadedCount++;
-      existingIds.add(tokenId);
-      consecutiveFailures = 0;
-      if (tokenId > newMaxId) {
-        newMaxId = tokenId;
-      }
-
-      // Be gentle to RPC / renderer
-      await new Promise(r => setTimeout(r, 500));
-    } catch (error) {
-      console.error(`Error processing tokenId ${tokenId}:`, error.message);
-      consecutiveFailures++;
-      // Continue with the next tokenId
+  // Download for all tokenIds from 0 up to the current max ID we have on disk.
+  // This ensures we "download till current id".
+  while (tokenId <= targetMaxId) {
+    // Build a batch of tokenIds to process in parallel, bounded by targetMaxId
+    const batchIds = [];
+    for (let i = 0; i < CONCURRENCY && tokenId <= targetMaxId; i++) {
+      batchIds.push(tokenId);
       tokenId++;
-      continue;
     }
+
+    if (batchIds.length === 0) break;
+
+    const results = await Promise.all(batchIds.map(async (id) => {
+      const filename = path.join(OUTPUT_DIR, `${id}.png`);
+      const blurredFilename = path.join(BLURRED_OUTPUT_DIR, `${id}.png`);
+
+      // Fast skip: if we already have both unblurred and blurred images, assume it's fully processed.
+      if (fs.existsSync(filename) && fs.existsSync(blurredFilename)) {
+        console.log(`Skipped (already processed): tokenId ${id}`);
+        return false; // not a new download
+      }
+
+      try {
+        const tokenUri = await contract.tokenURI(id);
+        const imageUrl = extractImageUrlFromTokenUri(tokenUri);
+
+        if (!imageUrl) {
+          console.warn(`No image URL found for tokenId ${id}`);
+          return false;
+        }
+
+        await downloadImage(imageUrl, filename);
+        downloadedCount++;
+        if (id > newMaxId) {
+          newMaxId = id;
+        }
+
+        // Small delay per token to avoid overloading RPC/renderer
+        await new Promise(r => setTimeout(r, 100));
+        return true;
+      } catch (error) {
+        console.error(`Error processing tokenId ${id}:`, error.message);
+        return false;
+      }
+    }));
   }
 
   console.log(`Finished processing. Downloaded ${downloadedCount} new images. Max processed ID (approx): ${newMaxId}`);
