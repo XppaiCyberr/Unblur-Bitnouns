@@ -6,6 +6,7 @@ import { unblurImage } from './unblur.js';
 const rpcUrl = "https://eth-mainnet.g.alchemy.com/v2/vQGyxhOFF05Xc6ekLTsRC";
 
 const CONTRACT_ADDRESS = '0xd7cb208297f661867a43c08afe5980ee88dfc678';
+const AUCTION_CONTRACT_ADDRESS = '0xA227441A4FA9b44ceC257D539dF8e4F80A491b80';
 const OUTPUT_DIR = path.join(process.cwd(), 'images');
 const BLURRED_OUTPUT_DIR = path.join(process.cwd(), 'images-blurred');
 
@@ -41,31 +42,41 @@ async function getTokenState(outputDir) {
 }
 
 async function downloadImage(url, filename) {
+  const tokenName = path.basename(filename, '.png');
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Failed to fetch image: ${res.statusText}`);
 
     const buffer = Buffer.from(await res.arrayBuffer());
+    const originalSize = (buffer.length / 1024).toFixed(1);
 
     // Save original blurred image alongside the unblurred version
+    let blurredSaved = false;
     try {
       const blurredFilename = path.join(BLURRED_OUTPUT_DIR, path.basename(filename));
       await fs.promises.writeFile(blurredFilename, buffer);
+      blurredSaved = true;
     } catch (err) {
-      console.warn(`Failed to save blurred image for ${url}:`, err.message);
+      console.warn(`  ⚠ Failed to save blurred original for token ${tokenName}: ${err.message}`);
     }
 
     let toWrite = buffer;
+    let unblurred = false;
     try {
       toWrite = await unblurImage(buffer);
+      unblurred = true;
     } catch (err) {
-      console.warn(`Unblur failed for ${url}, saving original:`, err.message);
+      console.warn(`  ⚠ Unblur failed for token ${tokenName}, saving original instead: ${err.message}`);
     }
 
+    const finalSize = (toWrite.length / 1024).toFixed(1);
     await fs.promises.writeFile(filename, toWrite);
-    console.log(`Downloaded: ${filename}`);
+
+    const savedType = unblurred ? '✓ unblurred' : '⚠ original (unblur failed)';
+    const blurredStatus = blurredSaved ? '✓ saved' : '✗ failed';
+    console.log(`  Token #${tokenName} | ${savedType} (${finalSize}KB) | blurred original: ${blurredStatus} (${originalSize}KB)`);
   } catch (error) {
-    console.error(`Error downloading ${url}:`, error.message);
+    console.error(`  ✗ Token #${tokenName} failed: ${error.message}`);
   }
 }
 
@@ -93,6 +104,13 @@ function extractImageUrlFromTokenUri(tokenUri) {
   }
 }
 
+async function getCurrentTokenId(provider) {
+  const auctionAbi = ['function auction() view returns (uint256 tokenId, uint256 highestBid, address highestBidder, uint40 startTime, uint40 endTime, bool settled)'];
+  const auctionContract = new ethers.Contract(AUCTION_CONTRACT_ADDRESS, auctionAbi, provider);
+  const auctionData = await auctionContract.auction();
+  return Number(auctionData.tokenId);
+}
+
 async function fetchNFTs() {
   const { maxId: maxProcessedId, existingIds } = await getTokenState(OUTPUT_DIR);
   let downloadedCount = 0;
@@ -107,19 +125,23 @@ async function fetchNFTs() {
     console.warn('Failed to ensure blurred images directory exists:', err.message);
   }
 
-  console.log(`Detected max processed ID: ${maxProcessedId}`);
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+
+  // Get the current token ID from the auction contract (realtime max supply)
+  const currentTokenId = await getCurrentTokenId(provider);
+  console.log(`Current auction token ID (max supply): ${currentTokenId}`);
+  console.log(`Detected max processed ID on disk: ${maxProcessedId}`);
   console.log(`Fetching NFTs directly from contract: ${CONTRACT_ADDRESS}...`);
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
   const abi = ['function tokenURI(uint256 tokenId) view returns (string)'];
   const contract = new ethers.Contract(CONTRACT_ADDRESS, abi, provider);
 
   const CONCURRENCY = 5;
-  const targetMaxId = maxProcessedId;
+  const targetMaxId = currentTokenId;
   let tokenId = 0;
 
-  // Download for all tokenIds from 0 up to the current max ID we have on disk.
-  // This ensures we "download till current id".
+  // Download all tokenIds from 0 up to the current auction token ID.
+  // This ensures we always sync up to the latest minted token.
   while (tokenId <= targetMaxId) {
     // Build a batch of tokenIds to process in parallel, bounded by targetMaxId
     const batchIds = [];
