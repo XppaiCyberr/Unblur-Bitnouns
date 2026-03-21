@@ -47,6 +47,49 @@ The repo has a workflow that:
 The workflow currently assumes the same RPC settings as your local script. If you change
 the `rpcUrl` in `index.js`, update the workflow if needed.
 
+## Use the Images
+
+All images are committed to this repo's `images/` (unblurred) and `images-blurred/` (originals) folders. You can embed them directly in your project using the **GitHub raw URL** as a free CDN.
+
+### URL Format
+
+```
+https://raw.githubusercontent.com/XppaiCyberr/Unblur-Bitnouns/main/images/{tokenId}.png
+```
+
+Replace `{tokenId}` with the token number (e.g. `0`, `42`, `517`).
+
+| Variant | URL |
+|---------|-----|
+| **Unblurred** (sharp 512×512) | `https://raw.githubusercontent.com/XppaiCyberr/Unblur-Bitnouns/main/images/445.png` |
+| **Original** (blurred) | `https://raw.githubusercontent.com/XppaiCyberr/Unblur-Bitnouns/main/images-blurred/445.png` |
+
+### Examples
+
+**Markdown:**
+
+```markdown
+![BitNoun #42](https://raw.githubusercontent.com/XppaiCyberr/Unblur-Bitnouns/main/images/445.png)
+```
+
+**HTML:**
+
+```html
+<img src="https://raw.githubusercontent.com/XppaiCyberr/Unblur-Bitnouns/main/images/445.png" alt="BitNoun #445" width="128" height="128" />
+```
+
+**JavaScript (dynamic):**
+
+```js
+const tokenId = 42;
+const imageUrl = `https://raw.githubusercontent.com/XppaiCyberr/Unblur-Bitnouns/main/images/${tokenId}.png`;
+```
+
+> **Note:** GitHub raw URLs are rate-limited. For high-traffic production apps, consider downloading the images and hosting them on your own CDN or using a service like [jsDelivr](https://www.jsdelivr.com/?docs=gh) which caches GitHub files:
+>
+> ```
+> https://cdn.jsdelivr.net/gh/XppaiCyberr/Unblur-Bitnouns@main/images/445.png
+> ```
 ## License
 
 MIT
