@@ -44,4 +44,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f images/ images-blurred/
-          git diff --staged --quiet || (git commit -m "chore: update NFT images [skip ci]" && git push)
+          CHANGED=$(git diff --staged --name-only | wc -l)
+          if [ "$CHANGED" -gt 0 ]; then
+            NEW=$(git diff --staged --diff-filter=A --name-only -- 'images/*.png' | wc -l)
+            DATE=$(date -u +"%Y-%m-%d")
+            git commit -m "📸 sync ${NEW} new NFT images (${DATE}) [skip ci]" \
+                        -m "Total files changed: ${CHANGED}"
+            git push
+          else
+            echo "No new images to commit."
+          fi
